@@ -1,1 +1,93 @@
+💡 Azure Cosmos DB Cost Optimization for Billing Records
+🔄 Current Scenario
+We have a serverless architecture in Azure where one of our services stores billing records in Azure Cosmos DB (serverless mode).
 
+Record Size: ~300 KB
+
+Total Records: Over 2 million
+
+Access Pattern: Read-heavy
+
+Observation: Records older than 3 months are rarely accessed
+
+Problem: Rapidly growing Cosmos DB costs due to storage and throughput
+
+🎯 Optimization Goals
+✅ No data loss
+
+✅ No downtime during migration
+
+✅ No changes to the existing API contracts
+
+✅ Maintain SLA-level access latency (seconds for archived records)
+
+✅ Use simple, serverless, and cost-effective Azure components
+
+✅ Optimization Strategy
+1. Data Tiering – Hot & Cold
+Hot Tier (Cosmos DB): Stores billing records from the last 3 months.
+
+Cold Tier (Azure Blob Storage – Archive Tier): Stores archived records >3 months old as compressed JSON/Parquet.
+
+2. Intelligent Routing Layer
+A central Azure Function (or API layer) determines the data source:
+
+If record.timestamp <= 90 days: fetch from Cosmos DB
+
+Else: fetch from Azure Blob Storage
+
+3. Automated Archival Job
+A Timer Triggered Azure Function runs daily to:
+
+Scan Cosmos DB for records older than 3 months
+
+Serialize and write them to Blob Storage
+
+Delete them from Cosmos DB to reduce cost
+
+🧠 Architecture Overview
+----------------------------------------------------------------------------pgsql-----------------------------------------------------------------------------------
+[Client / API Request]
+        |
+        | HTTP GET /billing/{id}
+        v
+[Azure Function: GetBillingRecord] ──> Query Cosmos DB (if recent)
+        |
+        └────> If not found ──> Query Blob Storage (archive)
+                                       |
+                              [Blob in JSON/Parquet]
+--------------------------------------------------------------------------sql----------------------------------------------------------------------------
+
+                [Timer Trigger - Azure Function: ArchiveBillingRecords]
+                        Cosmos DB → Blob Storage → Cosmos DB Deletion
+                               (Records older than 3 months)
+🧪 Pseudocode Snippets
+☁️ Read Routing Function
+---------------------------------------------------------------------------python--------------------------------------------------------------------------
+def get_billing_record(record_id):
+    metadata = cosmos_db.get_metadata(record_id)
+    if metadata['timestamp'] > datetime.utcnow() - timedelta(days=90):
+        return cosmos_db.get_record(record_id)
+    else:
+        return blob_storage.get(record_id)
+☁️ Archival Function (Timer Trigger)
+---------------------------------------------------------------------------python----------------------------------------------------------------------------
+def archive_old_records():
+    cutoff = datetime.utcnow() - timedelta(days=90)
+    old_records = cosmos_db.query("SELECT * FROM c WHERE c.timestamp < @cutoff", {"@cutoff": cutoff})
+
+    for record in old_records:
+        blob_storage.save_as_parquet(record)
+        cosmos_db.delete(record['id'])
+📁 Repo Structure Suggestion
+pgsql
+azure-cosmos-cost-optimization/
+├── function-archive/
+│   └── archive_old_records.py
+├── function-routing/
+│   └── get_billing_record.py
+├── blob-utils/
+│   └── blob_helpers.py
+├── templates/
+│   └── billing-record-schema.json
+├── README.md
